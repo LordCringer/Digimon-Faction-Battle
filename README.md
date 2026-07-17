@@ -50,6 +50,13 @@ regionals, majors, and online events are never pulled in.
 
 ## Setup
 
+### 0. Get the code onto your Ubuntu host
+
+```bash
+git clone https://github.com/LordCringer/Digimon-Faction-Battle.git
+cd Digimon-Faction-Battle
+```
+
 ### 1. Discord bot
 
 - Create an application at https://discord.com/developers/applications
@@ -130,6 +137,54 @@ join` still works too as a manual alternative to reacting.
 
 The bot needs **Manage Messages** permission in the sign-up channel so it
 can strip stray/duplicate reactions.
+
+## Running alongside another Discord bot on the same host
+
+If this Ubuntu host is already running another bot (e.g. a separate TCG
+lookup bot), keep them fully independent — different folder, different
+container, different Discord bot token.
+
+```bash
+cd ~
+git clone https://github.com/LordCringer/Digimon-Faction-Battle.git
+cd Digimon-Faction-Battle
+cp .env.example .env
+nano .env   # paste in THIS bot's own token — never reuse another bot's token
+docker compose up -d --build
+```
+
+Each bot needs its own Discord application/token (Discord will disconnect
+whichever one connects second if two containers share a token), its own
+container name (already set to `digimon-faction-bot` in
+`docker-compose.yml`), and its own data volume (`./data:/data`, local to
+this repo's folder, so it won't collide with another bot's SQLite files).
+
+```bash
+docker ps                                   # confirm both containers are up
+docker compose logs -f faction-bot          # logs for just this bot
+docker stats                                # sanity-check host isn't overloaded
+```
+
+To manage both from a single `docker-compose.yml`, merge them at a parent
+directory level, keeping each service's own `env_file` and volume path:
+
+```yaml
+services:
+  digimon-tcg-bot:
+    build: ./digimon-tcg-bot
+    restart: unless-stopped
+    env_file: ./digimon-tcg-bot/.env
+
+  faction-bot:
+    build: ./Digimon-Faction-Battle
+    restart: unless-stopped
+    env_file: ./Digimon-Faction-Battle/.env
+    volumes:
+      - ./Digimon-Faction-Battle/data:/data
+```
+
+Then `docker compose up -d` from that parent directory brings up both. No
+port conflicts either way — Discord bots only make outbound connections.
 
 ## Commands
 

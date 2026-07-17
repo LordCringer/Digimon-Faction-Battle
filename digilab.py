@@ -1,5 +1,6 @@
 import aiohttp
 import logging
+from urllib.parse import urljoin
 
 import config
 
@@ -30,7 +31,32 @@ class DigiLabClient:
             self._session = aiohttp.ClientSession()
         url = f"{config.DIGILAB_BASE_URL}{path}"
         headers = {"X-API-Key": self.api_key} if self.api_key else {}
-        async with self._session.get(url, headers=headers, params=params) as resp:
+
+        # Some endpoints (observed on /api/search) 302-redirect from
+        # api.digilab.cards to the bare digilab.cards domain, and that
+        # redirect's Location header drops the original query string.
+        # aiohttp's default auto-follow would silently hit the query-less
+        # URL and return an empty result. So we disable auto-follow and
+        # re-attach our own params to whatever host we're redirected to.
+        resp = await self._request_no_redirect(url, headers, params)
+        redirect_hops = 0
+        current_url = url
+        while resp.status in (301, 302, 307, 308) and redirect_hops < 3:
+            location = resp.headers.get("Location")
+            resp.release()
+            if not location:
+                break
+            current_url = urljoin(current_url, location)
+            redirect_hops += 1
+            resp = await self._request_no_redirect(current_url, headers, params)
+
+        return await self._handle_response(resp)
+
+    async def _request_no_redirect(self, url: str, headers: dict, params: dict):
+        return await self._session.get(url, headers=headers, params=params, allow_redirects=False)
+
+    async def _handle_response(self, resp):
+        async with resp:
             if resp.status == 429:
                 retry_after = resp.headers.get("Retry-After", "unknown")
                 raise DigiLabError(f"Rate limited by DigiLab API, retry after {retry_after}s")

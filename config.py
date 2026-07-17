@@ -5,9 +5,15 @@ load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DIGILAB_API_KEY = os.getenv("DIGILAB_API_KEY")
-GUILD_ID = int(os.getenv("GUILD_ID", "0")) or None  # optional: instant slash-cmd sync to one guild
+
+# GUILD_ID is optional. Handle it being unset, blank, or whitespace — all of
+# these should mean "no guild ID configured", not crash on int("").
+_guild_id_raw = (os.getenv("GUILD_ID") or "").strip()
+GUILD_ID = int(_guild_id_raw) if _guild_id_raw else None
+
 DB_PATH = os.getenv("DB_PATH", "faction_bot.db")
-POLL_INTERVAL_MINUTES = int(os.getenv("POLL_INTERVAL_MINUTES", "30"))
+_poll_raw = (os.getenv("POLL_INTERVAL_MINUTES") or "").strip()
+POLL_INTERVAL_MINUTES = int(_poll_raw) if _poll_raw else 30
 
 DIGILAB_BASE_URL = "https://api.digilab.cards"
 
