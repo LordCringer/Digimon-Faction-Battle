@@ -1,0 +1,51 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+DIGILAB_API_KEY = os.getenv("DIGILAB_API_KEY")
+GUILD_ID = int(os.getenv("GUILD_ID", "0")) or None  # optional: instant slash-cmd sync to one guild
+DB_PATH = os.getenv("DB_PATH", "faction_bot.db")
+POLL_INTERVAL_MINUTES = int(os.getenv("POLL_INTERVAL_MINUTES", "30"))
+
+DIGILAB_BASE_URL = "https://api.digilab.cards"
+
+# Factions created automatically on first startup (admins still need to set
+# an icon for each with /factionadmin set-icon before posting the sign-up
+# message). Renaming/deleting factions is still possible via /faction
+# create|delete for anything added later.
+DEFAULT_FACTIONS = ["Shambala", "Liberator", "Iliad", "Glowing Dawn"]
+
+# ---- Points scheme -----------------------------------------------------
+# Points awarded per result, based on placement. Two tables: tournaments
+# with fewer than SMALL_TOURNAMENT_THRESHOLD players use the reduced scale.
+SMALL_TOURNAMENT_THRESHOLD = 10  # player_count below this uses the small-event table
+
+PLACEMENT_POINTS_STANDARD = {
+    1: 10,
+    2: 7,
+    3: 6,
+    4: 5,
+    5: 4,
+    6: 3,
+    7: 2,
+    8: 1,
+}
+
+PLACEMENT_POINTS_SMALL = {
+    1: 5,
+    2: 3,
+    3: 2,
+    4: 1,
+}
+
+# Only in-person store locals are tracked for faction points — regionals,
+# majors, and online events are excluded entirely.
+TRACKED_EVENT_TYPES = ["locals"]
+
+
+def points_for_result(placement: int, event_type: str, player_count: int = None) -> float:
+    small_event = player_count is not None and player_count < SMALL_TOURNAMENT_THRESHOLD
+    table = PLACEMENT_POINTS_SMALL if small_event else PLACEMENT_POINTS_STANDARD
+    return table.get(placement, 0)  # placements outside the table score 0
