@@ -224,9 +224,10 @@ class Factions(commands.Cog):
 
     @faction_group.command(name="list", description="List all factions and their standings")
     async def list_factions(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         factions = await self.db.list_factions()
         if not factions:
-            await interaction.response.send_message("No factions have been created yet.")
+            await interaction.followup.send("No factions have been created yet.")
             return
         totals = await self.db.faction_totals()
         rows = []
@@ -235,21 +236,22 @@ class Factions(commands.Cog):
             icon = f["emoji"] or "❔"
             rows.append(f"{icon} **{f['name']}** — {totals.get(f['name'], 0):g} pts ({len(members)} members)")
         embed = discord.Embed(title="Factions", description="\n".join(rows), color=discord.Color.gold())
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @faction_group.command(name="leaderboard", description="Top players, overall or within a faction")
     @app_commands.autocomplete(name=faction_autocomplete)
     async def leaderboard(self, interaction: discord.Interaction, name: str = None):
+        await interaction.response.defer()
         rows = await self.db.member_totals(faction_name=name, limit=10)
         if not rows:
-            await interaction.response.send_message("No points have been awarded yet.")
+            await interaction.followup.send("No points have been awarded yet.")
             return
         lines = []
         for i, r in enumerate(rows, start=1):
             lines.append(f"**{i}.** <@{r['discord_id']}> — {r['total']:g} pts ({r['faction_name']})")
         title = f"Leaderboard — {name}" if name else "Leaderboard — All Factions"
         embed = discord.Embed(title=title, description="\n".join(lines), color=discord.Color.gold())
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="joinfactionbattle", description="Pick your faction with a dropdown menu")
     async def join_faction_battle(self, interaction: discord.Interaction):
@@ -268,6 +270,7 @@ class Factions(commands.Cog):
 
     @app_commands.command(name="profile", description="Show your faction, DigiLab link, and points")
     async def profile(self, interaction: discord.Interaction, user: discord.User = None):
+        await interaction.response.defer()
         target = user or interaction.user
         faction = await self.db.get_member_faction(target.id)
         reg = await self.db.get_registration(target.id)
@@ -281,7 +284,7 @@ class Factions(commands.Cog):
             value=f"[{reg['player_name']}](https://digilab.cards/player/{reg['player_slug']})" if reg else "*not linked — use `/register`*",
             inline=False,
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @create.error
     @delete.error

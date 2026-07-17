@@ -25,8 +25,10 @@ async def sync_points(db: DB, client: DigiLabClient, bot: discord.Client) -> lis
     # Look back 60 days by default so a bot restart / late registration
     # still picks up recent results, without paging through full history.
     date_from = (date.today() - timedelta(days=60)).isoformat()
+    log.info("Sync starting: scene=%r event_types=%r date_from=%s", scene, config.TRACKED_EVENT_TYPES, date_from)
 
     awards = []
+    total_results_seen = 0
     page = 1
     while True:
         try:
@@ -44,11 +46,17 @@ async def sync_points(db: DB, client: DigiLabClient, bot: discord.Client) -> lis
             break
 
         if not resp or not resp.get("data"):
+            log.info("Page %d: no data returned, stopping", page)
             break
 
-        for result in resp["data"]:
+        page_results = resp["data"]
+        total_results_seen += len(page_results)
+        log.info("Page %d: %d result(s) returned by DigiLab", page, len(page_results))
+
+        for result in page_results:
             result_id = result["result_id"]
             if await db.already_awarded(result_id):
+                log.info("result_id=%s (%s) already awarded, skipping", result_id, result.get("player_name"))
                 continue
 
             player_slug = result.get("player_slug")
@@ -57,10 +65,14 @@ async def sync_points(db: DB, client: DigiLabClient, bot: discord.Client) -> lis
 
             discord_id = await db.get_discord_id_for_slug(player_slug)
             if not discord_id:
+                log.info("result_id=%s player_slug=%s has no linked Discord account, skipping",
+                         result_id, player_slug)
                 continue  # this player hasn't linked their DigiLab account
 
             faction_name = await db.get_member_faction(discord_id)
             if not faction_name:
+                log.info("result_id=%s discord_id=%s is linked but not in a faction, skipping",
+                         result_id, discord_id)
                 continue  # registered but not in a faction
 
             points = config.points_for_result(
@@ -92,6 +104,8 @@ async def sync_points(db: DB, client: DigiLabClient, bot: discord.Client) -> lis
         if page >= pagination.get("total_pages", 1):
             break
         page += 1
+
+    log.info("Sync finished: %d result(s) seen from DigiLab, %d award(s) given", total_results_seen, len(awards))
 
     if awards:
         await announce(bot, db, awards)

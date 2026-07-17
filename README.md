@@ -19,6 +19,36 @@ points — it only knows tournament results by player name. So this bot:
 Every result is keyed by DigiLab's `result_id`, so re-polling (or a bot
 restart) never double-counts a result.
 
+## How points actually get in
+
+DigiLab's public API only exposes full tournament standings through decklist
+submissions — `/api/decklists` only lists players who had a decklist
+attached to their result. There's no API path to full standings without
+that; `/api/tournaments` only gives the winner, nobody else. If your store
+isn't reliably getting decklists submitted every week (most casual locals
+scenes aren't), the automatic DigiLab sync will mostly sit empty.
+
+**So there are two ways points get awarded, and you can use either or both:**
+
+1. **Manual logging (recommended, no decklist required)** — after a locals,
+   an admin runs `/factionadmin log-result` once per placing member, using
+   whatever's shown on the tournament's DigiLab page (place, player,
+   record) or just from memory of how the event went:
+   ```
+   /factionadmin log-result user:@Jefe placement:2 player_count:5
+   ```
+   This computes points from the same standard/small-event table
+   automatically — no DigiLab lookup involved at all.
+
+2. **Automatic DigiLab sync (bonus, only works if decklists get submitted)**
+   — `/factionadmin sync` and the background poller both pull from
+   `/api/decklists` for your configured scene. If someone submits full
+   decklists for an event, this picks it up on its own and nobody has to
+   log anything manually for that event.
+
+Both paths write to the same points table and the same leaderboard — mixing
+them for different events is fine, there's no conflict.
+
 ## Points scheme
 
 Edit `config.py` to tune this:
@@ -202,7 +232,8 @@ port conflicts either way — Discord bots only make outbound connections.
 | `/faction delete <name>` | Manage Server | Delete a faction |
 | `/factionadmin set-icon <name> <emoji>` | Manage Server | Set the emoji used to join a faction by reacting |
 | `/factionadmin post-signup [#channel]` | Manage Server | Post the reaction-based faction sign-up message |
-| `/factionadmin set-scene <slug>` | Manage Server | Set which DigiLab scene to track |
+| `/factionadmin log-result <user> <placement> <player_count>` | Manage Server | **Manually log a placement — no DigiLab decklist needed.** Computes points from the standard table. |
+| `/factionadmin set-scene <slug>` | Manage Server | Set which DigiLab scene to track (only matters if you use auto-sync) |
 | `/factionadmin set-channel <#channel>` | Manage Server | Set results announcement channel |
 | `/factionadmin sync` | Manage Server | Force an immediate DigiLab check |
 | `/factionadmin award <user> <points> [reason]` | Manage Server | Manually adjust a member's points |

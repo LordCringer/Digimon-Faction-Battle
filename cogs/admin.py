@@ -118,6 +118,42 @@ class Admin(commands.Cog):
         await self.db.set_setting("signup_message_id", str(message.id))
         await self.db.set_setting("signup_channel_id", str(target.id))
 
+    @admin_group.command(name="log-result", description="Log a tournament placement manually — no DigiLab decklist required")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.describe(
+        user="The player who placed",
+        placement="Final placement (1 = first place)",
+        player_count="Total players in the tournament (determines the points table used)",
+        event_date="Event date, e.g. 2026-07-17 (optional, just for the log)",
+    )
+    async def log_result(self, interaction: discord.Interaction, user: discord.User, placement: int,
+                          player_count: int, event_date: str = None):
+        if placement < 1 or player_count < 1 or placement > player_count:
+            await interaction.response.send_message(
+                "Placement has to be between 1 and the player count.", ephemeral=True
+            )
+            return
+
+        faction = await self.db.get_member_faction(user.id)
+        if not faction:
+            await interaction.response.send_message(f"{user.mention} isn't in a faction yet.", ephemeral=True)
+            return
+
+        points = config.points_for_result(placement, "locals", player_count)
+        reason = f"Manual locals log: {placement} of {player_count}"
+        if event_date:
+            reason += f" on {event_date}"
+        await self.db.manual_award(user.id, faction, points, reason)
+
+        if points == 0:
+            note = " (placement scored 0 under the current points table)"
+        else:
+            note = ""
+        await interaction.response.send_message(
+            f"Logged **{user.display_name}** — {placement} of {player_count} → "
+            f"**{points:g}** points for **{faction}**{note}"
+        )
+
     @admin_group.command(name="award", description="Manually award points to a user")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def award(self, interaction: discord.Interaction, user: discord.User, points: float, reason: str = ""):
@@ -135,6 +171,7 @@ class Admin(commands.Cog):
     @set_icon.error
     @post_signup.error
     @sync.error
+    @log_result.error
     @award.error
     async def perms_error(self, interaction: discord.Interaction, error):
         if isinstance(error, app_commands.MissingPermissions):
