@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import datetime
 
@@ -8,6 +9,8 @@ from discord.ext import commands
 import config
 from digilab import DigiLabError
 from points_sync import sync_points
+
+log = logging.getLogger("admin")
 
 
 def parse_tournament_id(raw: str) -> int | None:
@@ -473,11 +476,30 @@ class Admin(commands.Cog):
     @log_tournament.error
     @log_result.error
     @award.error
-    async def perms_error(self, interaction: discord.Interaction, error):
+    async def perms_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("You need Manage Server permission for that.", ephemeral=True)
+            msg = "You need Manage Server permission for that."
+        elif isinstance(error, app_commands.TransformerError):
+            # e.g. someone typed free text into a channel/user option instead
+            # of picking one of Discord's own suggestions as they typed.
+            msg = (
+                f"`{error.value}` isn't a valid {error.type.name} — "
+                f"pick one from Discord's suggestions as you type that option, "
+                f"rather than typing it freehand."
+            )
         else:
-            raise error
+            log.exception("Unhandled error in %s",
+                           interaction.command.qualified_name if interaction.command else "unknown command",
+                           exc_info=error)
+            msg = "Something went wrong running that command — it's been logged for the admins to check."
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except discord.HTTPException:
+            pass
 
 
 async def setup(bot: commands.Bot):

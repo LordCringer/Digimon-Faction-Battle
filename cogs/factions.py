@@ -415,11 +415,31 @@ class Factions(commands.Cog):
 
     @create.error
     @delete.error
-    async def perms_error(self, interaction: discord.Interaction, error):
+    async def perms_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("You need Manage Server permission for that.", ephemeral=True)
+            msg = "You need Manage Server permission for that."
+        elif isinstance(error, app_commands.TransformerError):
+            msg = (
+                f"`{error.value}` isn't a valid {error.type.name} — "
+                f"pick one from Discord's suggestions as you type that option, "
+                f"rather than typing it freehand."
+            )
         else:
-            raise error
+            import logging
+            logging.getLogger("factions").exception(
+                "Unhandled error in %s",
+                interaction.command.qualified_name if interaction.command else "unknown command",
+                exc_info=error,
+            )
+            msg = "Something went wrong running that command — it's been logged for the admins to check."
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except discord.HTTPException:
+            pass
 
 
 async def setup(bot: commands.Bot):
