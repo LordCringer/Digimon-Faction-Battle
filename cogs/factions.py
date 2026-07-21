@@ -2,7 +2,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import config
 from digilab import DigiLabError
+from faction_confirm import confirm_faction_switch
 
 
 class FactionNameTransformer(app_commands.Transformer):
@@ -38,13 +40,36 @@ class LinkAndJoinSelect(discord.ui.Select):
         p = self.players[idx]
         db = interaction.client.db
         await db.register_player(interaction.user.id, None, p.get("display_name"), p["slug"])
-        await db.join_faction(interaction.user.id, self.faction_name)
+
+        current = await db.get_member_faction(interaction.user.id)
+        if current and current != self.faction_name:
+            await interaction.response.edit_message(content="Check your DMs to confirm the faction switch...", view=None)
+            confirmed = await confirm_faction_switch(interaction.client, interaction.user.id, current, self.faction_name)
+            if confirmed is None:
+                await interaction.followup.send(
+                    "I couldn't DM you to confirm — please enable DMs from server members and try again.",
+                    ephemeral=True,
+                )
+                return
+            if not confirmed:
+                await interaction.followup.send("Switch cancelled — you're still in your current faction.", ephemeral=True)
+                return
+            reset = await db.switch_faction(interaction.user.id, self.faction_name)
+            faction = await db.get_faction(self.faction_name)
+            icon = (faction["emoji"] if faction else "") or ""
+            content = f"Linked to **{p.get('display_name')}** and {icon} joined **{self.faction_name}**!".strip()
+            if reset:
+                content += "\n-# Your accumulated points from your previous faction were reset — switching starts you at 0."
+            await interaction.followup.send(content, ephemeral=True)
+            return
+
+        reset = await db.switch_faction(interaction.user.id, self.faction_name)
         faction = await db.get_faction(self.faction_name)
         icon = (faction["emoji"] if faction else "") or ""
-        await interaction.response.edit_message(
-            content=f"Linked to **{p.get('display_name')}** and {icon} joined **{self.faction_name}**!".strip(),
-            view=None,
-        )
+        content = f"Linked to **{p.get('display_name')}** and {icon} joined **{self.faction_name}**!".strip()
+        if reset:
+            content += "\n-# Your accumulated points from your previous faction were reset — switching starts you at 0."
+        await interaction.response.edit_message(content=content, view=None)
 
 
 class LinkAndJoinPickerView(discord.ui.View):
@@ -100,13 +125,28 @@ class DigiLabLinkModal(discord.ui.Modal, title="Link your DigiLab account"):
         if len(players) == 1:
             p = players[0]
             await db.register_player(interaction.user.id, None, p.get("display_name"), p["slug"])
-            await db.join_faction(interaction.user.id, self.faction_name)
+
+            current = await db.get_member_faction(interaction.user.id)
+            if current and current != self.faction_name:
+                await interaction.followup.send("Check your DMs to confirm the faction switch...", ephemeral=True)
+                confirmed = await confirm_faction_switch(bot, interaction.user.id, current, self.faction_name)
+                if confirmed is None:
+                    await interaction.followup.send(
+                        "I couldn't DM you to confirm — please enable DMs from server members and try again.",
+                        ephemeral=True,
+                    )
+                    return
+                if not confirmed:
+                    await interaction.followup.send("Switch cancelled — you're still in your current faction.", ephemeral=True)
+                    return
+
+            reset = await db.switch_faction(interaction.user.id, self.faction_name)
             faction = await db.get_faction(self.faction_name)
             icon = (faction["emoji"] if faction else "") or ""
-            await interaction.followup.send(
-                f"Linked to **{p.get('display_name')}** and {icon} joined **{self.faction_name}**!".strip(),
-                ephemeral=True,
-            )
+            content = f"Linked to **{p.get('display_name')}** and {icon} joined **{self.faction_name}**!".strip()
+            if reset:
+                content += "\n-# Your accumulated points from your previous faction were reset — switching starts you at 0."
+            await interaction.followup.send(content, ephemeral=True)
             return
 
         view = LinkAndJoinPickerView(players, self.faction_name, interaction.user.id)
@@ -142,12 +182,33 @@ class FactionSelect(discord.ui.Select):
         reg = await db.get_registration(interaction.user.id)
         if reg:
             # Already linked from a previous session — no need to ask again.
-            await db.join_faction(interaction.user.id, chosen)
+            current = await db.get_member_faction(interaction.user.id)
+            if current and current != chosen:
+                await interaction.response.edit_message(content="Check your DMs to confirm the faction switch...", view=None)
+                confirmed = await confirm_faction_switch(interaction.client, interaction.user.id, current, chosen)
+                if confirmed is None:
+                    await interaction.followup.send(
+                        "I couldn't DM you to confirm — please enable DMs from server members and try again.",
+                        ephemeral=True,
+                    )
+                    return
+                if not confirmed:
+                    await interaction.followup.send("Switch cancelled — you're still in your current faction.", ephemeral=True)
+                    return
+                reset = await db.switch_faction(interaction.user.id, chosen)
+                icon = faction["emoji"] or ""
+                content = f"{icon} You joined **{chosen}**! (tracking results for your linked player **{reg['player_name']}**)".strip()
+                if reset:
+                    content += "\n-# Your accumulated points from your previous faction were reset — switching starts you at 0."
+                await interaction.followup.send(content, ephemeral=True)
+                return
+
+            reset = await db.switch_faction(interaction.user.id, chosen)
             icon = faction["emoji"] or ""
-            await interaction.response.edit_message(
-                content=f"{icon} You joined **{chosen}**! (tracking results for your linked player **{reg['player_name']}**)".strip(),
-                view=None,
-            )
+            content = f"{icon} You joined **{chosen}**! (tracking results for your linked player **{reg['player_name']}**)".strip()
+            if reset:
+                content += "\n-# Your accumulated points from your previous faction were reset — switching starts you at 0."
+            await interaction.response.edit_message(content=content, view=None)
             return
 
         # Not linked yet: this is required before the join completes.
@@ -192,37 +253,59 @@ class Factions(commands.Cog):
     @app_commands.checks.has_permissions(manage_guild=True)
     @app_commands.describe(name="Faction name", emoji="An emoji to represent the faction")
     async def create(self, interaction: discord.Interaction, name: str, emoji: str = ""):
+        await interaction.response.defer()
         ok = await self.db.create_faction(name, emoji, interaction.user.id)
         if not ok:
-            await interaction.response.send_message(f"A faction named **{name}** already exists.", ephemeral=True)
+            await interaction.followup.send(f"A faction named **{name}** already exists.", ephemeral=True)
             return
-        await interaction.response.send_message(f"{emoji} Faction **{name}** created.")
+        await interaction.followup.send(f"{emoji} Faction **{name}** created.")
 
     @faction_group.command(name="delete", description="Delete a faction (admin only)")
     @app_commands.checks.has_permissions(manage_guild=True)
     @app_commands.autocomplete(name=faction_autocomplete)
     async def delete(self, interaction: discord.Interaction, name: str):
+        await interaction.response.defer()
         ok = await self.db.delete_faction(name)
         msg = f"Deleted faction **{name}**." if ok else f"No faction named **{name}**."
-        await interaction.response.send_message(msg, ephemeral=not ok)
+        await interaction.followup.send(msg, ephemeral=not ok)
 
     @faction_group.command(name="join", description="Join a faction")
     @app_commands.autocomplete(name=faction_autocomplete)
     async def join(self, interaction: discord.Interaction, name: str):
+        await interaction.response.defer()
         faction = await self.db.get_faction(name)
         if not faction:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"No faction named **{name}**. Use `/faction list` to see options.", ephemeral=True
             )
             return
-        await self.db.join_faction(interaction.user.id, name)
-        await interaction.response.send_message(f"{faction['emoji']} You joined **{name}**!")
+
+        current = await self.db.get_member_faction(interaction.user.id)
+        if current and current != name:
+            await interaction.followup.send("Check your DMs to confirm the faction switch...", ephemeral=True)
+            confirmed = await confirm_faction_switch(interaction.client, interaction.user.id, current, name)
+            if confirmed is None:
+                await interaction.followup.send(
+                    "I couldn't DM you to confirm — please enable DMs from server members and try again.",
+                    ephemeral=True,
+                )
+                return
+            if not confirmed:
+                await interaction.followup.send("Switch cancelled — you're still in your current faction.", ephemeral=True)
+                return
+
+        reset = await self.db.switch_faction(interaction.user.id, name)
+        msg = f"{faction['emoji']} You joined **{name}**!"
+        if reset:
+            msg += "\n-# Your accumulated points from your previous faction were reset — switching starts you at 0."
+        await interaction.followup.send(msg)
 
     @faction_group.command(name="leave", description="Leave your current faction")
     async def leave(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         ok = await self.db.leave_faction(interaction.user.id)
         msg = "You left your faction." if ok else "You're not in a faction."
-        await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.followup.send(msg, ephemeral=True)
 
     @faction_group.command(name="list", description="List all factions and their standings")
     async def list_factions(self, interaction: discord.Interaction):
@@ -257,18 +340,60 @@ class Factions(commands.Cog):
 
     @app_commands.command(name="joinfactionbattle", description="Pick your faction with a dropdown menu")
     async def join_faction_battle(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         factions = await self.db.list_factions()
         if not factions:
-            await interaction.response.send_message("No factions exist yet — ask an admin to create some.", ephemeral=True)
+            await interaction.followup.send("No factions exist yet — ask an admin to create some.", ephemeral=True)
             return
         view = FactionBattleView(factions, interaction.user.id)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "⚔️ Choose your faction below. If this is your first time, you'll be asked to "
             "link your DigiLab account right after — this is required so your tournament "
             "results count toward your faction's score.",
             view=view,
             ephemeral=True,
         )
+
+    @app_commands.command(name="tournaments", description="List recent tournaments DigiLab has for the configured scene")
+    @app_commands.describe(limit="How many to show, most recent first (default 10, max 25)")
+    async def tournaments(self, interaction: discord.Interaction, limit: int = 10):
+        await interaction.response.defer()
+        scene = await self.db.get_setting("scene_slug")
+        if not scene:
+            await interaction.followup.send("No scene has been configured yet — ask an admin to set one.", ephemeral=True)
+            return
+
+        limit = max(1, min(limit, 25))
+        try:
+            resp = await self.bot.digilab.tournaments(
+                scene=scene, event_type=config.TRACKED_EVENT_TYPES,
+                page=1, per_page=limit, sort="date", sort_dir="desc",
+            )
+        except DigiLabError as e:
+            await interaction.followup.send(f"Couldn't reach DigiLab: {e}", ephemeral=True)
+            return
+
+        tournament_list = (resp or {}).get("data", [])
+        if not tournament_list:
+            await interaction.followup.send(f"No tournaments found for scene **{scene}**.", ephemeral=True)
+            return
+
+        excluded_ids = await self.db.get_excluded_tournament_ids()
+        lines = []
+        for t in tournament_list:
+            tid = t.get("tournament_id")
+            tag = " 🚫 excluded" if tid in excluded_ids else ""
+            lines.append(
+                f"`{tid}` — {t.get('event_date', '?')} · {t.get('store_name', 'unknown store')} · "
+                f"{t.get('player_count', '?')} players · winner: {t.get('winner_name', '?')}{tag}"
+            )
+
+        embed = discord.Embed(
+            title=f"Tournaments — {scene}",
+            description="\n".join(lines)[:4000],
+            color=discord.Color.blue(),
+        )
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="profile", description="Show your faction, DigiLab link, and points")
     async def profile(self, interaction: discord.Interaction, user: discord.User = None):

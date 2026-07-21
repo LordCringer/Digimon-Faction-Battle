@@ -10,6 +10,13 @@ from digilab import DigiLabError
 from points_sync import sync_points
 
 
+def parse_tournament_id(raw: str) -> int | None:
+    """Accepts either a bare numeric ID or a full digilab.cards/tournament/... URL."""
+    match = re.search(r"tournament/(\d+)", raw)
+    id_str = match.group(1) if match else raw.strip()
+    return int(id_str) if id_str.isdigit() else None
+
+
 class TournamentStandingsModal(discord.ui.Modal, title="Log Tournament Standings"):
     """
     Bulk placement entry — paste standings straight from the tournament
@@ -33,6 +40,7 @@ class TournamentStandingsModal(discord.ui.Modal, title="Log Tournament Standings
     LINE_RE = re.compile(r"^\s*(\d+)\s*[.,)\-:]?\s*(.+?)\s*$")
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         db = interaction.client.db
         lines = [l for l in self.standings.value.splitlines() if l.strip()]
         player_count = len(lines)
@@ -78,7 +86,7 @@ class TournamentStandingsModal(discord.ui.Modal, title="Log Tournament Standings
             description="\n".join(lines_out)[:4000],
             color=discord.Color.green() if awarded else discord.Color.orange(),
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 
 class Admin(commands.Cog):
@@ -106,8 +114,9 @@ class Admin(commands.Cog):
                 f"`{date}` isn't a valid date — use YYYY-MM-DD format, e.g. `2026-07-20`.", ephemeral=True
             )
             return
+        await interaction.response.defer()
         await self.db.set_setting("season_start_date", date)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Auto-sync will now only count tournaments on or after **{date}**. "
             f"Anything earlier is excluded even if it's within DigiLab's data."
         )
@@ -115,11 +124,12 @@ class Admin(commands.Cog):
     @admin_group.command(name="season-info", description="Show the current season start date, if any")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def season_info(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         start = await self.db.get_setting("season_start_date")
         if start:
-            await interaction.response.send_message(f"Season start is set to **{start}**. Auto-sync ignores anything before this date.")
+            await interaction.followup.send(f"Season start is set to **{start}**. Auto-sync ignores anything before this date.")
         else:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"No season start date set — auto-sync defaults to the last "
                 f"{config.DEFAULT_LOOKBACK_DAYS} days. Use `/factionadmin set-season-start` to set a fixed cutoff."
             )
@@ -127,22 +137,24 @@ class Admin(commands.Cog):
     @admin_group.command(name="set-scene", description="Set the DigiLab scene slug tracked for points (e.g. austin-tx)")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def set_scene(self, interaction: discord.Interaction, scene_slug: str):
+        await interaction.response.defer()
         scene = await self.bot.digilab.scene(scene_slug)
         if not scene:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"DigiLab doesn't recognize scene `{scene_slug}`. Check `/api/scenes` or the site's scene URL slug.",
                 ephemeral=True,
             )
             return
         await self.db.set_setting("scene_slug", scene_slug)
         label = scene.get("scope", {}).get("label", scene_slug)
-        await interaction.response.send_message(f"Tracking tournaments for **{label}** (`{scene_slug}`).")
+        await interaction.followup.send(f"Tracking tournaments for **{label}** (`{scene_slug}`).")
 
     @admin_group.command(name="set-channel", description="Set the channel for new-results announcements")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await interaction.response.defer()
         await self.db.set_setting("announce_channel_id", str(channel.id))
-        await interaction.response.send_message(f"Results will be announced in {channel.mention}.")
+        await interaction.followup.send(f"Results will be announced in {channel.mention}.")
 
     @admin_group.command(name="sync", description="Manually check DigiLab for new results right now")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -172,32 +184,34 @@ class Admin(commands.Cog):
             await interaction.response.send_message(f"`{emoji}` doesn't look like a valid emoji.", ephemeral=True)
             return
 
+        await interaction.response.defer()
         existing = await self.db.get_faction_by_emoji(str(parsed))
         if existing and existing["name"] != name:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"{parsed} is already used by **{existing['name']}**. Pick a different emoji.", ephemeral=True
             )
             return
 
         ok = await self.db.set_faction_emoji(name, str(parsed))
         if not ok:
-            await interaction.response.send_message(f"No faction named **{name}**.", ephemeral=True)
+            await interaction.followup.send(f"No faction named **{name}**.", ephemeral=True)
             return
-        await interaction.response.send_message(f"**{name}** icon set to {parsed}.")
+        await interaction.followup.send(f"**{name}** icon set to {parsed}.")
 
     @admin_group.command(name="post-signup", description="Post the faction sign-up message (react to join)")
     @app_commands.checks.has_permissions(manage_guild=True)
     @app_commands.describe(channel="Where to post it (defaults to this channel)")
     async def post_signup(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
+        await interaction.response.defer(ephemeral=True)
         target = channel or interaction.channel
         factions = await self.db.list_factions()
         if not factions:
-            await interaction.response.send_message("No factions exist yet — use `/faction create` first.", ephemeral=True)
+            await interaction.followup.send("No factions exist yet — use `/faction create` first.", ephemeral=True)
             return
 
         missing = [f["name"] for f in factions if not f["emoji"]]
         if missing:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "These factions don't have an icon set yet — use `/factionadmin set-icon` first: "
                 + ", ".join(f"**{n}**" for n in missing),
                 ephemeral=True,
@@ -212,7 +226,7 @@ class Admin(commands.Cog):
         )
         embed.set_footer(text="Reacting with a different faction's emoji switches you. Use /faction leave to opt out entirely.")
 
-        await interaction.response.send_message(f"Posting sign-up message in {target.mention}...", ephemeral=True)
+        await interaction.followup.send(f"Posting sign-up message in {target.mention}...", ephemeral=True)
         message = await target.send(embed=embed)
         for f in factions:
             try:
@@ -223,23 +237,102 @@ class Admin(commands.Cog):
         await self.db.set_setting("signup_message_id", str(message.id))
         await self.db.set_setting("signup_channel_id", str(target.id))
 
+    @admin_group.command(name="exclude-tournament", description="Block a tournament ID from ever awarding points")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.describe(tournament="Tournament ID or full URL", reason="Optional note for your own reference")
+    async def exclude_tournament(self, interaction: discord.Interaction, tournament: str, reason: str = ""):
+        await interaction.response.defer()
+        tournament_id = parse_tournament_id(tournament)
+        if tournament_id is None:
+            await interaction.followup.send(
+                "Couldn't figure out a tournament ID from that — pass the numeric ID or full URL.",
+                ephemeral=True,
+            )
+            return
+        await self.db.exclude_tournament(tournament_id, interaction.user.id, reason)
+        msg = f"🚫 Tournament `{tournament_id}` is now excluded — it will never award points via auto-sync or `log-tournament-id`."
+        if reason:
+            msg += f"\nReason: {reason}"
+        await interaction.followup.send(msg)
+
+    @admin_group.command(name="include-tournament", description="Remove a tournament ID from the exclusion list")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.describe(tournament="Tournament ID or full URL")
+    async def include_tournament(self, interaction: discord.Interaction, tournament: str):
+        await interaction.response.defer()
+        tournament_id = parse_tournament_id(tournament)
+        if tournament_id is None:
+            await interaction.followup.send(
+                "Couldn't figure out a tournament ID from that — pass the numeric ID or full URL.",
+                ephemeral=True,
+            )
+            return
+        was_excluded = await self.db.include_tournament(tournament_id)
+        if was_excluded:
+            await interaction.followup.send(
+                f"Tournament `{tournament_id}` removed from the exclusion list — it's eligible for "
+                f"points again and will be picked up on the next auto-sync."
+            )
+        else:
+            await interaction.followup.send(f"Tournament `{tournament_id}` wasn't on the exclusion list.", ephemeral=True)
+
+    @admin_group.command(name="list-excluded", description="List all tournament IDs excluded from awarding points")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def list_excluded(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        rows = await self.db.list_excluded_tournaments()
+        if not rows:
+            await interaction.followup.send("No tournaments are currently excluded.", ephemeral=True)
+            return
+        lines = [
+            f"`{r['tournament_id']}`" + (f" — {r['reason']}" if r["reason"] else "") + f" (excluded {r['excluded_at']})"
+            for r in rows
+        ]
+        embed = discord.Embed(title="Excluded tournaments", description="\n".join(lines)[:4000], color=discord.Color.dark_red())
+        await interaction.followup.send(embed=embed)
+
+    @admin_group.command(name="clear-leaderboard", description="⚠️ Wipe ALL points for ALL members — cannot be undone")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.describe(confirm="Type CONFIRM (all caps, exact) to proceed")
+    async def clear_leaderboard(self, interaction: discord.Interaction, confirm: str):
+        if confirm != "CONFIRM":
+            await interaction.response.send_message(
+                "Not cleared. This wipes **every member's points, in every faction, permanently** — "
+                "there's no undo. If you're sure, run this again with `confirm:CONFIRM` (exact, all caps).",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.defer()
+        count = await self.db.clear_all_points()
+        await interaction.followup.send(
+            f"🗑️ Cleared **{count}** point log entr{'y' if count == 1 else 'ies'} — every member's total is now 0.\n"
+            f"-# Already-synced tournaments won't be re-awarded automatically — use `/factionadmin include-tournament` "
+            f"on specific ones if you want auto-sync to reprocess them."
+        )
+
     @admin_group.command(name="log-tournament-id", description="Fetch and log full standings for a tournament ID — official API, no decklist required")
     @app_commands.checks.has_permissions(manage_guild=True)
     @app_commands.describe(tournament="Tournament ID or full digilab.cards/tournament/... URL")
     async def log_tournament_id(self, interaction: discord.Interaction, tournament: str):
         await interaction.response.defer()
 
-        # Accept either a bare ID ("6116") or a full URL.
-        match = re.search(r"tournament/(\d+)", tournament)
-        tournament_id_str = match.group(1) if match else tournament.strip()
-        if not tournament_id_str.isdigit():
+        tournament_id = parse_tournament_id(tournament)
+        if tournament_id is None:
             await interaction.followup.send(
                 "Couldn't figure out a tournament ID from that — pass either the numeric ID "
                 "(e.g. `6116`) or the full URL (e.g. `https://digilab.cards/tournament/6116`).",
                 ephemeral=True,
             )
             return
-        tournament_id = int(tournament_id_str)
+
+        if await self.db.is_tournament_excluded(tournament_id):
+            await interaction.followup.send(
+                f"Tournament `{tournament_id}` is on the exclusion list, so it won't be logged. "
+                f"Run `/factionadmin include-tournament tournament:{tournament_id}` first if you "
+                f"really want to log it.",
+                ephemeral=True,
+            )
+            return
 
         try:
             detail = await self.bot.digilab.tournament_detail(tournament_id)
@@ -331,9 +424,10 @@ class Admin(commands.Cog):
             )
             return
 
+        await interaction.response.defer()
         faction = await self.db.get_member_faction(user.id)
         if not faction:
-            await interaction.response.send_message(f"{user.mention} isn't in a faction yet.", ephemeral=True)
+            await interaction.followup.send(f"{user.mention} isn't in a faction yet.", ephemeral=True)
             return
 
         points = config.points_for_result(placement, "locals", player_count)
@@ -346,7 +440,7 @@ class Admin(commands.Cog):
             note = " (placement scored 0 under the current points table)"
         else:
             note = ""
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Logged **{user.display_name}** — {placement} of {player_count} → "
             f"**{points:g}** points for **{faction}**{note}"
         )
@@ -354,12 +448,13 @@ class Admin(commands.Cog):
     @admin_group.command(name="award", description="Manually award points to a user")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def award(self, interaction: discord.Interaction, user: discord.User, points: float, reason: str = ""):
+        await interaction.response.defer()
         faction = await self.db.get_member_faction(user.id)
         if not faction:
-            await interaction.response.send_message(f"{user.mention} isn't in a faction yet.", ephemeral=True)
+            await interaction.followup.send(f"{user.mention} isn't in a faction yet.", ephemeral=True)
             return
         await self.db.manual_award(user.id, faction, points, reason or "manual award")
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Awarded **{points:g}** points to {user.mention} ({faction})" + (f" — {reason}" if reason else "")
         )
 
@@ -370,6 +465,10 @@ class Admin(commands.Cog):
     @set_season_start.error
     @season_info.error
     @sync.error
+    @exclude_tournament.error
+    @include_tournament.error
+    @list_excluded.error
+    @clear_leaderboard.error
     @log_tournament_id.error
     @log_tournament.error
     @log_result.error

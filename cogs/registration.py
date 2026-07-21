@@ -88,11 +88,12 @@ class Registration(commands.Cog):
 
     @app_commands.command(name="unregister", description="Unlink your DigiLab player profile")
     async def unregister(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         await self.bot.db._conn.execute(
             "DELETE FROM registrations WHERE discord_id = ?", (interaction.user.id,)
         )
         await self.bot.db._conn.commit()
-        await interaction.response.send_message("Unlinked your DigiLab profile.", ephemeral=True)
+        await interaction.followup.send("Unlinked your DigiLab profile.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 
+from faction_confirm import confirm_faction_switch
+
 
 class Reactions(commands.Cog):
     """
@@ -56,10 +58,25 @@ class Reactions(commands.Cog):
                 except discord.HTTPException:
                     pass
 
-        await self.db.join_faction(payload.user_id, faction["name"])
+        current = await self.db.get_member_faction(payload.user_id)
+        if current and current != faction["name"]:
+            confirmed = await confirm_faction_switch(self.bot, payload.user_id, current, faction["name"])
+            if not confirmed:
+                # They didn't confirm (said NO, timed out, or DMs are closed) —
+                # revert the reaction so it doesn't misrepresent their faction.
+                try:
+                    await message.remove_reaction(payload.emoji, member)
+                except discord.HTTPException:
+                    pass
+                return
+
+        reset = await self.db.switch_faction(payload.user_id, faction["name"])
 
         try:
-            await member.send(f"{faction['emoji']} You joined **{faction['name']}**!")
+            content = f"{faction['emoji']} You joined **{faction['name']}**!"
+            if reset:
+                content += "\nYour accumulated points from your previous faction were reset — switching starts you at 0."
+            await member.send(content)
         except discord.HTTPException:
             pass  # DMs closed, no big deal
 

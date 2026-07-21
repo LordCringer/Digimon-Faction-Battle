@@ -46,6 +46,15 @@ CREATE TABLE IF NOT EXISTS synced_tournaments (
     synced_at     TEXT DEFAULT (datetime('now'))
 );
 
+-- Tournament IDs an admin has explicitly blocked from ever awarding
+-- points, checked by both auto-sync and the manual log-tournament-id command.
+CREATE TABLE IF NOT EXISTS excluded_tournaments (
+    tournament_id INTEGER PRIMARY KEY,
+    excluded_by   INTEGER,
+    reason        TEXT,
+    excluded_at   TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -149,6 +158,24 @@ class DB:
         )
         await self._conn.commit()
 
+    async def switch_faction(self, discord_id: int, new_faction_name: str) -> bool:
+        """
+        Joins discord_id into new_faction_name. If they were already in a
+        DIFFERENT faction, their accumulated points_log history is wiped
+        first — switching factions means starting over at 0, not carrying
+        points across (and not leaving them credited to the faction they
+        just left, either). Returns True if this was an actual switch
+        (points got reset); False if they joined fresh or re-picked the
+        faction they were already in (no-op, nothing reset).
+        """
+        current = await self.get_member_faction(discord_id)
+        reset = bool(current and current != new_faction_name)
+        if reset:
+            await self._conn.execute("DELETE FROM points_log WHERE discord_id = ?", (discord_id,))
+            await self._conn.commit()
+        await self.join_faction(discord_id, new_faction_name)
+        return reset
+
     async def leave_faction(self, discord_id: int):
         cur = await self._conn.execute("DELETE FROM members WHERE discord_id = ?", (discord_id,))
         await self._conn.commit()
@@ -218,6 +245,57 @@ class DB:
             "INSERT OR IGNORE INTO synced_tournaments (tournament_id) VALUES (?)", (tournament_id,)
         )
         await self._conn.commit()
+
+    async def clear_all_points(self) -> int:
+        """Wipes every points_log row (leaderboard reset). Does NOT touch
+        synced_tournaments, so auto-sync won't immediately re-award the
+        wiped points on its next run. Returns how many rows were deleted."""
+        async with self.cursor() as cur:
+            await cur.execute("SELECT COUNT(*) AS c FROM points_log")
+            count = (await cur.fetchone())["c"]
+        await self._conn.execute("DELETE FROM points_log")
+        await self._conn.commit()
+        return count
+
+    # ---- tournament exclusions ----
+    async def exclude_tournament(self, tournament_id: int, excluded_by: int, reason: str = ""):
+        await self._conn.execute(
+            "INSERT INTO excluded_tournaments (tournament_id, excluded_by, reason) VALUES (?, ?, ?) "
+            "ON CONFLICT(tournament_id) DO UPDATE SET reason = excluded.reason, "
+            "excluded_by = excluded.excluded_by, excluded_at = datetime('now')",
+            (tournament_id, excluded_by, reason),
+        )
+        await self._conn.commit()
+
+    async def include_tournament(self, tournament_id: int) -> bool:
+        """Removes a tournament from the exclusion list, and clears its
+        synced marker too — otherwise it'd stay permanently skipped by
+        auto-sync even after being un-excluded. Returns True if it had
+        actually been on the exclusion list."""
+        cur = await self._conn.execute(
+            "DELETE FROM excluded_tournaments WHERE tournament_id = ?", (tournament_id,)
+        )
+        was_excluded = cur.rowcount > 0
+        await self._conn.execute(
+            "DELETE FROM synced_tournaments WHERE tournament_id = ?", (tournament_id,)
+        )
+        await self._conn.commit()
+        return was_excluded
+
+    async def is_tournament_excluded(self, tournament_id: int) -> bool:
+        async with self.cursor() as cur:
+            await cur.execute("SELECT 1 FROM excluded_tournaments WHERE tournament_id = ?", (tournament_id,))
+            return (await cur.fetchone()) is not None
+
+    async def get_excluded_tournament_ids(self) -> set:
+        async with self.cursor() as cur:
+            await cur.execute("SELECT tournament_id FROM excluded_tournaments")
+            return {r["tournament_id"] for r in await cur.fetchall()}
+
+    async def list_excluded_tournaments(self):
+        async with self.cursor() as cur:
+            await cur.execute("SELECT * FROM excluded_tournaments ORDER BY excluded_at DESC")
+            return await cur.fetchall()
 
     async def award_points(self, result_id, discord_id, faction_name, points,
                             placement=None, event_date=None, event_type=None,

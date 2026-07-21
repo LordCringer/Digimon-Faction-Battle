@@ -81,6 +81,11 @@ async def sync_points(db: DB, client: DigiLabClient, bot: discord.Client) -> lis
             if await db.tournament_already_synced(tournament_id):
                 continue
 
+            if await db.is_tournament_excluded(tournament_id):
+                log.info("tournament_id=%s is excluded, skipping", tournament_id)
+                await db.mark_tournament_synced(tournament_id)
+                continue
+
             try:
                 detail = await client.tournament_detail(tournament_id)
             except DigiLabError as e:

@@ -194,6 +194,20 @@ join` still works too as a manual alternative to reacting.
 The bot needs **Manage Messages** permission in the sign-up channel so it
 can strip stray/duplicate reactions.
 
+**Switching factions requires confirmation and resets your points.**
+Whenever someone tries to join a *different* faction than the one they're
+currently in — via `/joinfactionbattle`, `/faction join`, or reacting on
+the sign-up message — the bot DMs them: *"Switching to X will reset your
+points to 0 — type YES to confirm or NO to cancel"* (60 second window).
+Only on **YES** does the switch and reset actually happen; **NO**, a
+timeout, or DMs being closed all cancel it and leave them in their current
+faction untouched (for reaction-based attempts, the reaction itself gets
+reverted too, so it doesn't visually misrepresent their faction). Joining
+fresh (no current faction) or re-picking the same faction skips
+confirmation entirely, since there's nothing to reset. `/faction leave`
+(with no faction rejoined afterward) does **not** trigger this — the
+reset only happens at the moment of joining a different faction.
+
 ## Running alongside another Discord bot on the same host
 
 If this Ubuntu host is already running another bot (e.g. a separate TCG
@@ -254,6 +268,7 @@ port conflicts either way — Discord bots only make outbound connections.
 | `/faction list` | anyone | Show all factions and their point totals |
 | `/faction leaderboard [name]` | anyone | Top players, overall or per-faction |
 | `/profile [user]` | anyone | Your (or someone's) faction, points, DigiLab link |
+| `/tournaments [limit]` | anyone | Browse recent tournaments in the configured scene, with their IDs |
 | `/faction create <name> [emoji]` | Manage Server | Create a faction |
 | `/faction delete <name>` | Manage Server | Delete a faction |
 | `/factionadmin set-icon <name> <emoji>` | Manage Server | Set the emoji used to join a faction by reacting |
