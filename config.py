@@ -35,20 +35,20 @@ SMALL_TOURNAMENT_THRESHOLD = 10  # player_count below this uses the small-event 
 
 PLACEMENT_POINTS_STANDARD = {
     1: 10,
-    2: 7,
-    3: 6,
-    4: 5,
-    5: 4,
-    6: 3,
-    7: 2,
-    8: 1,
+    2: 8,
+    3: 7,
+    4: 6,
+    5: 5,
+    6: 4,
+    7: 3,
+    8: 2,
 }
 
 PLACEMENT_POINTS_SMALL = {
-    1: 5,
-    2: 3,
-    3: 2,
-    4: 1,
+    1: 7,
+    2: 5,
+    3: 4,
+    4: 3,
 }
 
 # Only in-person store locals are tracked for faction points — regionals,
@@ -59,4 +59,6 @@ TRACKED_EVENT_TYPES = ["locals"]
 def points_for_result(placement: int, event_type: str, player_count: int = None) -> float:
     small_event = player_count is not None and player_count < SMALL_TOURNAMENT_THRESHOLD
     table = PLACEMENT_POINTS_SMALL if small_event else PLACEMENT_POINTS_STANDARD
-    return table.get(placement, 0)  # placements outside the table score 0
+    # Any valid placement not explicitly listed still scores 1 point —
+    # everyone who plays and places gets something, not just top finishers.
+    return table.get(placement, 1)

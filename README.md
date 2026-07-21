@@ -77,11 +77,11 @@ Edit `config.py` to tune this:
 SMALL_TOURNAMENT_THRESHOLD = 10  # player_count below this uses the small-event table
 
 PLACEMENT_POINTS_STANDARD = {
-    1: 10, 2: 7, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1,
+    1: 10, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3, 8: 2,
 }
 
 PLACEMENT_POINTS_SMALL = {
-    1: 5, 2: 3, 3: 2, 4: 1,
+    1: 7, 2: 5, 3: 4, 4: 3,
 }
 
 # Only in-person store locals are tracked — regionals, majors, and online
@@ -90,9 +90,11 @@ TRACKED_EVENT_TYPES = ["locals"]
 ```
 
 Tournaments with **10 or more players** use the standard table; anything
-smaller automatically drops to the reduced table. Placements outside a
-table (9th+ in a big event, 5th+ in a small one) score **0** — DigiLab's
-`player_count` field on each result is what decides which table applies.
+smaller automatically drops to the reduced table. Any valid placement
+**not** explicitly listed still scores **1 point** — everyone who plays
+and places gets something, not just top-8 (or top-4 in small events)
+finishers. DigiLab's `player_count` field on each result is what decides
+which table applies.
 
 There's no event-type multiplier — a locals win is worth the same
 everywhere. Only `locals` results factor into faction points at all;
