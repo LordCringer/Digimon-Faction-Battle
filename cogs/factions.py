@@ -21,12 +21,12 @@ def _player_option_kwargs(p: dict) -> dict:
 
 
 class LinkAndJoinSelect(discord.ui.Select):
-    """Second-step picker when a name search returns multiple DigiLab players.
+    """Second-step picker when a name lookup returns multiple DigiLab players.
     Selecting one links it AND completes the faction join in one shot."""
 
     def __init__(self, players: list[dict], faction_name: str):
         options = [
-            discord.SelectOption(label=p["name"][:100], value=str(i), **_player_option_kwargs(p))
+            discord.SelectOption(label=(p.get("display_name") or "Unknown")[:100], value=str(i), **_player_option_kwargs(p))
             for i, p in enumerate(players[:25])
         ]
         super().__init__(placeholder="Which player is you?", min_values=1, max_values=1, options=options)
@@ -37,12 +37,12 @@ class LinkAndJoinSelect(discord.ui.Select):
         idx = int(self.values[0])
         p = self.players[idx]
         db = interaction.client.db
-        await db.register_player(interaction.user.id, p["id"], p["name"], p["slug"])
+        await db.register_player(interaction.user.id, None, p.get("display_name"), p["slug"])
         await db.join_faction(interaction.user.id, self.faction_name)
         faction = await db.get_faction(self.faction_name)
         icon = (faction["emoji"] if faction else "") or ""
         await interaction.response.edit_message(
-            content=f"Linked to **{p['name']}** and {icon} joined **{self.faction_name}**!".strip(),
+            content=f"Linked to **{p.get('display_name')}** and {icon} joined **{self.faction_name}**!".strip(),
             view=None,
         )
 
@@ -79,13 +79,15 @@ class DigiLabLinkModal(discord.ui.Modal, title="Link your DigiLab account"):
         db = bot.db
         await interaction.response.defer(ephemeral=True)
 
+        scene = await db.get_setting("scene_slug")
         try:
-            results = await bot.digilab.search(self.player_name.value)
+            # DigiLab removed /api/search (2026-07-20); lookup now goes
+            # through the leaderboard, scoped to the configured scene.
+            players = await bot.digilab.find_players_by_name(self.player_name.value, scene=scene)
         except DigiLabError as e:
             await interaction.followup.send(f"Couldn't reach DigiLab right now: {e}", ephemeral=True)
             return
 
-        players = (results or {}).get("players", [])
         if not players:
             await interaction.followup.send(
                 f"No DigiLab players found matching **{self.player_name.value}**. "
@@ -97,12 +99,12 @@ class DigiLabLinkModal(discord.ui.Modal, title="Link your DigiLab account"):
 
         if len(players) == 1:
             p = players[0]
-            await db.register_player(interaction.user.id, p["id"], p["name"], p["slug"])
+            await db.register_player(interaction.user.id, None, p.get("display_name"), p["slug"])
             await db.join_faction(interaction.user.id, self.faction_name)
             faction = await db.get_faction(self.faction_name)
             icon = (faction["emoji"] if faction else "") or ""
             await interaction.followup.send(
-                f"Linked to **{p['name']}** and {icon} joined **{self.faction_name}**!".strip(),
+                f"Linked to **{p.get('display_name')}** and {icon} joined **{self.faction_name}**!".strip(),
                 ephemeral=True,
             )
             return

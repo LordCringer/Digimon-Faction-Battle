@@ -13,7 +13,7 @@ class PlayerPicker(discord.ui.View):
 
         options = [
             discord.SelectOption(
-                label=p["name"][:100],
+                label=(p.get("display_name") or "Unknown")[:100],
                 description=f"Rating {p.get('rating', '?')} · {p.get('events_played', '?')} events"
                             f"{' · ' + p['scene_name'] if p.get('scene_name') else ''}"[:100],
                 value=str(i),
@@ -33,7 +33,7 @@ class PlayerPicker(discord.ui.View):
         self.chosen = self.players[idx]
         self.stop()
         await interaction.response.edit_message(
-            content=f"Linked to **{self.chosen['name']}**.", view=None
+            content=f"Linked to **{self.chosen.get('display_name')}**.", view=None
         )
 
 
@@ -49,24 +49,32 @@ class Registration(commands.Cog):
     @app_commands.describe(name="Your player name as it appears on DigiLab / at tournaments")
     async def register(self, interaction: discord.Interaction, name: str):
         await interaction.response.defer(ephemeral=True)
+
+        scene = await self.db.get_setting("scene_slug")
         try:
-            results = await self.bot.digilab.search(name)
+            # DigiLab removed /api/search (2026-07-20), so lookup goes
+            # through the leaderboard instead, scoped to the configured
+            # scene when set — much faster and more relevant than a global
+            # scan, since it's your actual local player pool.
+            players = await self.bot.digilab.find_players_by_name(name, scene=scene)
         except DigiLabError as e:
             await interaction.followup.send(f"Couldn't reach DigiLab right now: {e}", ephemeral=True)
             return
 
-        players = (results or {}).get("players", [])
         if not players:
+            scope_note = f" in the **{scene}** scene" if scene else ""
             await interaction.followup.send(
-                f"No DigiLab players found matching **{name}**. Check the spelling of your tournament name.",
+                f"No DigiLab players found matching **{name}**{scope_note}. Check the spelling, "
+                f"or make sure you've placed in at least one tracked tournament yet — the "
+                f"leaderboard only includes players with recorded results.",
                 ephemeral=True,
             )
             return
 
         if len(players) == 1:
             p = players[0]
-            await self.db.register_player(interaction.user.id, p["id"], p["name"], p["slug"])
-            await interaction.followup.send(f"Linked to **{p['name']}**.", ephemeral=True)
+            await self.db.register_player(interaction.user.id, None, p.get("display_name"), p["slug"])
+            await interaction.followup.send(f"Linked to **{p.get('display_name')}**.", ephemeral=True)
             return
 
         view = PlayerPicker(players, interaction.user.id)
@@ -76,7 +84,7 @@ class Registration(commands.Cog):
         await view.wait()
         if view.chosen:
             p = view.chosen
-            await self.db.register_player(interaction.user.id, p["id"], p["name"], p["slug"])
+            await self.db.register_player(interaction.user.id, None, p.get("display_name"), p["slug"])
 
     @app_commands.command(name="unregister", description="Unlink your DigiLab player profile")
     async def unregister(self, interaction: discord.Interaction):

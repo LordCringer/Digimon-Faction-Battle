@@ -11,7 +11,7 @@ points — it only knows tournament results by player name. So this bot:
 1. Lets each Discord member **link their account** to their DigiLab player
    profile (`/register`).
 2. Lets members **join a faction** (`/faction join`).
-3. **Polls DigiLab** every `POLL_INTERVAL_MINUTES` (default 30) for new
+3. **Polls DigiLab** every `POLL_INTERVAL_MINUTES` (default 15) for new
    results in your configured local scene, matches them to linked members,
    and awards points to their faction based on placement.
 4. Posts an announcement embed and tracks a leaderboard.
@@ -21,33 +21,53 @@ restart) never double-counts a result.
 
 ## How points actually get in
 
-DigiLab's public API only exposes full tournament standings through decklist
-submissions — `/api/decklists` only lists players who had a decklist
-attached to their result. There's no API path to full standings without
-that; `/api/tournaments` only gives the winner, nobody else. If your store
-isn't reliably getting decklists submitted every week (most casual locals
-scenes aren't), the automatic DigiLab sync will mostly sit empty.
+**As of DigiLab's 2026-07-20 API update, this no longer requires decklists
+at all.** They added `GET /api/tournament/{id}` — full standings (every
+placement, record, and deck) for a single event, with no decklist
+submission required. The bot's automatic sync (`/factionadmin sync` and
+the background poller) now uses this directly: it discovers tournaments in
+your scene via `/api/tournaments`, then pulls full standings for each one
+via `/api/tournament/{id}`. As long as your store logs full results (not
+just the winner) on DigiLab, this awards points automatically — no manual
+work needed most weeks.
 
-**So there are two ways points get awarded, and you can use either or both:**
+Manual options are still there as fallbacks, for events that aren't on
+DigiLab at all or if you want to fix/backfill something:
 
-1. **Manual logging (recommended, no decklist required)** — after a locals,
-   an admin runs `/factionadmin log-result` once per placing member, using
-   whatever's shown on the tournament's DigiLab page (place, player,
-   record) or just from memory of how the event went:
+1. **Automatic DigiLab sync (primary path now)** — `/factionadmin sync`
+   and the background poller pull full standings from
+   `/api/tournament/{id}` for every tournament in your configured scene.
+   No decklist required, official API, nothing fragile.
+
+2. **Fetch one specific tournament on demand** —
+   `/factionadmin log-tournament-id tournament:6116` (ID or full URL)
+   calls the same official endpoint immediately for a single event,
+   useful right after locals wraps instead of waiting for the next poll.
+
+3. **Bulk logging by paste (no DigiLab lookup at all)** —
+   `/factionadmin log-tournament` pops up a text box. Paste standings,
+   one line per player:
+   ```
+   1, Bobby Lau
+   2, Jefe
+   3, Dan Ly
+   4, Matt G
+   5, Matt K
+   ```
+   Matches each name (case-insensitive) against whoever's `/register`ed.
+   Useful for events that never made it onto DigiLab.
+
+4. **Single-player logging** — `/factionadmin log-result` for one person:
    ```
    /factionadmin log-result user:@Jefe placement:2 player_count:5
    ```
-   This computes points from the same standard/small-event table
-   automatically — no DigiLab lookup involved at all.
 
-2. **Automatic DigiLab sync (bonus, only works if decklists get submitted)**
-   — `/factionadmin sync` and the background poller both pull from
-   `/api/decklists` for your configured scene. If someone submits full
-   decklists for an event, this picks it up on its own and nobody has to
-   log anything manually for that event.
-
-Both paths write to the same points table and the same leaderboard — mixing
-them for different events is fine, there's no conflict.
+All four write to the same points table — mixing them for different events
+is fine. Just avoid running both the automatic sync **and** a manual
+command for the *same* tournament, since they don't recognize each other's
+entries as duplicates (manual logs use synthetic IDs specifically so they
+never collide with DigiLab's real IDs, which means they also won't
+dedupe against each other).
 
 ## Points scheme
 
@@ -130,7 +150,13 @@ need to give each one an icon before members can join by reacting.
 1. `/factionadmin set-scene austin-tx` — find your scene slug from
    `https://digilab.cards/leaderboard` (it's in the URL) or `GET /api/scenes`.
 2. `/factionadmin set-channel #tournament-results` — where new results get announced.
-3. Set an icon for each faction:
+3. `/factionadmin set-season-start date:2026-07-20` — sets a firm cutoff so
+   auto-sync only counts tournaments on/after this date, ignoring anything
+   from before the faction battle started. Without this, auto-sync falls
+   back to a rolling last-60-days window (`DEFAULT_LOOKBACK_DAYS` in
+   `config.py`), which will pull in old, pre-season results. Check the
+   current setting anytime with `/factionadmin season-info`.
+4. Set an icon for each faction:
    ```
    /factionadmin set-icon name:Shambala emoji:🌀
    /factionadmin set-icon name:Liberator emoji:⚔️
@@ -138,16 +164,16 @@ need to give each one an icon before members can join by reacting.
    /factionadmin set-icon name:"Glowing Dawn" emoji:🌅
    ```
    (any emoji works, including custom server emoji — just pick unique ones)
-4. `/factionadmin post-signup channel:#faction-signup` — posts an embed
+5. `/factionadmin post-signup channel:#faction-signup` — posts an embed
    listing all factions and reacts to it with each faction's emoji. Members
    can join this way too, but it does **not** require a DigiLab link (see
    note below).
-5. Point members at **`/joinfactionbattle`** — this is the primary flow:
+6. Point members at **`/joinfactionbattle`** — this is the primary flow:
    they pick a faction from a dropdown, and if they haven't linked DigiLab
    yet, a popup immediately asks for their tournament name before the join
    is finalized. If they're already linked (e.g. via `/register` earlier),
    it skips straight to joining.
-6. `/factionadmin sync` to pull in any recent results immediately instead of
+7. `/factionadmin sync` to pull in any recent results immediately instead of
    waiting for the next poll.
 
 **Heads up:** the reaction sign-up message and `/faction join` are still
@@ -232,20 +258,31 @@ port conflicts either way — Discord bots only make outbound connections.
 | `/faction delete <name>` | Manage Server | Delete a faction |
 | `/factionadmin set-icon <name> <emoji>` | Manage Server | Set the emoji used to join a faction by reacting |
 | `/factionadmin post-signup [#channel]` | Manage Server | Post the reaction-based faction sign-up message |
-| `/factionadmin log-result <user> <placement> <player_count>` | Manage Server | **Manually log a placement — no DigiLab decklist needed.** Computes points from the standard table. |
+| `/factionadmin log-tournament-id <tournament>` | Manage Server | Fetch and log one tournament's full standings on demand — official API, no decklist needed |
+| `/factionadmin log-tournament` | Manage Server | Bulk-log standings by pasting them — for events not on DigiLab at all |
+| `/factionadmin log-result <user> <placement> <player_count>` | Manage Server | Manually log a single placement |
 | `/factionadmin set-scene <slug>` | Manage Server | Set which DigiLab scene to track (only matters if you use auto-sync) |
+| `/factionadmin set-season-start <date>` | Manage Server | Set a firm cutoff date (YYYY-MM-DD) — auto-sync ignores tournaments before it |
+| `/factionadmin season-info` | Manage Server | Show the current season start date, or the fallback lookback window if unset |
 | `/factionadmin set-channel <#channel>` | Manage Server | Set results announcement channel |
 | `/factionadmin sync` | Manage Server | Force an immediate DigiLab check |
 | `/factionadmin award <user> <points> [reason]` | Manage Server | Manually adjust a member's points |
 
 ## Notes / limitations
 
-- Matching is by DigiLab player **name search** at registration time — if
-  someone plays under a different name at events, `/register` again with
-  the right name (it re-links, doesn't duplicate).
-- DigiLab's API only exposes **decklist submissions** (which include
-  placement), not a bare "attendance" list — so a player only scores if
-  they (or the store) submitted a decklist for that event.
+- Matching is by DigiLab player **name lookup against the leaderboard** at
+  registration time (scoped to your configured scene) — if someone plays
+  under a different name at events, `/register` again with the right name
+  (it re-links, doesn't duplicate). The leaderboard only includes players
+  with at least one recorded result, so brand-new players may not show up
+  until they've played their first tracked event.
+- As of DigiLab's 2026-07-20 update, **no decklist submission is required**
+  for points — `/api/tournament/{id}` gives full standings regardless.
+  A player only needs to actually be recorded in the tournament's results.
+- **Anonymous players** (DigiLab profile set to private) appear in
+  standings with no slug, so they can never be matched to a Discord
+  account — this is a DigiLab-side privacy setting, not something the bot
+  can work around.
 - Only `locals` event results count toward faction points
   (`TRACKED_EVENT_TYPES` in `config.py`) — regionals, majors, and online
   events are intentionally excluded to keep this strictly an in-person

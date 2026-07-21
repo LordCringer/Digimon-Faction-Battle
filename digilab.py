@@ -69,19 +69,67 @@ class DigiLabClient:
                 raise DigiLabError(f"DigiLab API error {resp.status}: {text}")
             return await resp.json()
 
-    async def search(self, query: str):
-        """Cross-entity search; used to resolve a Discord user's DigiLab player."""
-        return await self._get("/api/search", {"q": query})
-
-    async def decklists(self, scene: str = None, event_type: list[str] = None,
-                         date_from: str = None, page: int = 1, per_page: int = 50,
-                         sort: str = "date", sort_dir: str = "asc"):
+    async def tournaments(self, scene: str = None, event_type: list[str] = None,
+                           date_from: str = None, date_to: str = None,
+                           page: int = 1, per_page: int = 50,
+                           sort: str = "date", sort_dir: str = "asc"):
+        """Listing endpoint — winner only, but tells us which tournament_ids exist."""
         params = {"page": page, "per_page": per_page, "sort": sort, "sort_dir": sort_dir}
         if scene:
             params["scene"] = scene
         if date_from:
             params["date_from"] = date_from
-        # event_type is repeatable; aiohttp handles list values as repeated params
+        if date_to:
+            params["date_to"] = date_to
+        if event_type:
+            params["event_type"] = event_type
+        return await self._get("/api/tournaments", params)
+
+    async def tournament_detail(self, tournament_id: int):
+        """Full standings for one tournament — every placement, no decklist required."""
+        return await self._get(f"/api/tournament/{tournament_id}")
+
+    async def leaderboard(self, scene: str = None, page: int = 1, per_page: int = 100,
+                           sort: str = "rating", sort_dir: str = "desc"):
+        params = {"page": page, "per_page": per_page, "sort": sort, "sort_dir": sort_dir}
+        if scene:
+            params["scene"] = scene
+        return await self._get("/api/leaderboard", params)
+
+    async def find_players_by_name(self, name: str, scene: str = None, max_pages: int = 3):
+        """
+        DigiLab removed /api/search (2026-07-20 changelog), so player lookup
+        now goes through the leaderboard instead — scoped to a scene when
+        possible, since that's both faster and more relevant than a global
+        scan. Client-side substring match on display_name.
+        """
+        name_lower = name.strip().lower()
+        matches = []
+        for page in range(1, max_pages + 1):
+            resp = await self.leaderboard(scene=scene, page=page, per_page=100)
+            if not resp or not resp.get("data"):
+                break
+            for row in resp["data"]:
+                if name_lower in (row.get("display_name") or "").lower():
+                    matches.append(row)
+            pagination = resp.get("pagination", {})
+            if page >= pagination.get("total_pages", 1):
+                break
+        return matches
+
+    async def decklists(self, scene: str = None, event_type: list[str] = None,
+                         date_from: str = None, page: int = 1, per_page: int = 50,
+                         sort: str = "date", sort_dir: str = "asc"):
+        """
+        Kept for reference/meta features, but no longer used for points —
+        /api/tournament/{id} gives full standings without needing a
+        decklist, which is strictly better for scoring purposes.
+        """
+        params = {"page": page, "per_page": per_page, "sort": sort, "sort_dir": sort_dir}
+        if scene:
+            params["scene"] = scene
+        if date_from:
+            params["date_from"] = date_from
         if event_type:
             params["event_type"] = event_type
         return await self._get("/api/decklists", params)

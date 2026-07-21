@@ -10,29 +10,51 @@ from digilab import DigiLabClient, DigiLabError
 log = logging.getLogger("points_sync")
 
 
+def _synthetic_result_id(tournament_id: int, placement: int) -> int:
+    """
+    /api/tournament/{id} standings don't carry a unique result_id like
+    /api/decklists did, so we build one deterministically. tournament_ids
+    are in the low thousands and placements are small two/three-digit
+    numbers at most, so this stays far below real decklist result_ids
+    (tens of thousands) — no collision risk between the two id spaces.
+    """
+    return tournament_id * 1000 + placement
+
+
 async def sync_points(db: DB, client: DigiLabClient, bot: discord.Client) -> list[dict]:
     """
-    Pull recent decklist results for the configured scene, award points to
-    any registered+factioned player we haven't already scored, and return
-    a list of award dicts for announcement. Idempotent: safe to call as
-    often as you like, results are keyed by DigiLab's result_id.
+    Discover tournaments in the configured scene via /api/tournaments,
+    then pull each one's full standings via /api/tournament/{id} — which
+    DigiLab added 2026-07-20 and does NOT require a decklist submission,
+    unlike the old /api/decklists-based approach this used to use.
+    Idempotent: tournaments already fully processed are tracked and
+    skipped outright; awards within a tournament are keyed by a
+    deterministic synthetic id so re-running never double-counts.
     """
     scene = await db.get_setting("scene_slug")
     if not scene:
         log.info("No scene configured yet, skipping sync")
         return []
 
-    # Look back 60 days by default so a bot restart / late registration
-    # still picks up recent results, without paging through full history.
-    date_from = (date.today() - timedelta(days=60)).isoformat()
-    log.info("Sync starting: scene=%r event_types=%r date_from=%s", scene, config.TRACKED_EVENT_TYPES, date_from)
+    # A fixed season start date (set via /factionadmin set-season-start)
+    # takes priority over the rolling lookback default — once set, it's a
+    # firm cutoff and never drifts, so "start of the faction battle" stays
+    # "start of the faction battle" no matter how long the bot's been running.
+    season_start = await db.get_setting("season_start_date")
+    if season_start:
+        date_from = season_start
+    else:
+        date_from = (date.today() - timedelta(days=config.DEFAULT_LOOKBACK_DAYS)).isoformat()
+    log.info("Sync starting: scene=%r event_types=%r date_from=%s (season_start=%s)",
+             scene, config.TRACKED_EVENT_TYPES, date_from, season_start or "not set, using rolling default")
 
     awards = []
-    total_results_seen = 0
+    total_tournaments_seen = 0
+    tournaments_processed = 0
     page = 1
     while True:
         try:
-            resp = await client.decklists(
+            resp = await client.tournaments(
                 scene=scene,
                 event_type=config.TRACKED_EVENT_TYPES,
                 date_from=date_from,
@@ -46,66 +68,92 @@ async def sync_points(db: DB, client: DigiLabClient, bot: discord.Client) -> lis
             break
 
         if not resp or not resp.get("data"):
-            log.info("Page %d: no data returned, stopping", page)
+            log.info("Page %d: no tournaments returned, stopping", page)
             break
 
-        page_results = resp["data"]
-        total_results_seen += len(page_results)
-        log.info("Page %d: %d result(s) returned by DigiLab", page, len(page_results))
+        page_tournaments = resp["data"]
+        total_tournaments_seen += len(page_tournaments)
+        log.info("Page %d: %d tournament(s) returned by DigiLab", page, len(page_tournaments))
 
-        for result in page_results:
-            result_id = result["result_id"]
-            if await db.already_awarded(result_id):
-                log.info("result_id=%s (%s) already awarded, skipping", result_id, result.get("player_name"))
+        for t in page_tournaments:
+            tournament_id = t["tournament_id"]
+
+            if await db.tournament_already_synced(tournament_id):
                 continue
 
-            player_slug = result.get("player_slug")
-            if not player_slug:
+            try:
+                detail = await client.tournament_detail(tournament_id)
+            except DigiLabError as e:
+                log.warning("tournament_id=%s detail fetch failed: %s", tournament_id, e)
                 continue
 
-            discord_id = await db.get_discord_id_for_slug(player_slug)
-            if not discord_id:
-                log.info("result_id=%s player_slug=%s has no linked Discord account, skipping",
-                         result_id, player_slug)
-                continue  # this player hasn't linked their DigiLab account
+            if not detail or not detail.get("tournament"):
+                log.info("tournament_id=%s: no detail returned, skipping", tournament_id)
+                continue
 
-            faction_name = await db.get_member_faction(discord_id)
-            if not faction_name:
-                log.info("result_id=%s discord_id=%s is linked but not in a faction, skipping",
-                         result_id, discord_id)
-                continue  # registered but not in a faction
+            info = detail["tournament"]
+            player_count = info.get("player_count")
+            event_type = info.get("event_type")
+            event_date = info.get("date")
+            store = info.get("store") or {}
+            store_name = store.get("name")
 
-            points = config.points_for_result(
-                result["placement"], result["event_type"], result.get("player_count")
-            )
-            await db.award_points(
-                result_id=result_id,
-                discord_id=discord_id,
-                faction_name=faction_name,
-                points=points,
-                placement=result["placement"],
-                event_date=result["event_date"],
-                event_type=result["event_type"],
-                store_name=result.get("store_name"),
-                reason="tournament result",
-            )
-            awards.append({
-                "discord_id": discord_id,
-                "faction_name": faction_name,
-                "points": points,
-                "placement": result["placement"],
-                "player_name": result.get("player_name"),
-                "store_name": result.get("store_name"),
-                "event_date": result["event_date"],
-                "event_type": result["event_type"],
-            })
+            for standing in detail.get("standings", []):
+                player = standing.get("player") or {}
+                slug = player.get("slug")
+                placement = standing.get("placement")
+                if not slug or placement is None:
+                    continue  # anonymous player or malformed row — skip
+
+                synthetic_id = _synthetic_result_id(tournament_id, placement)
+                if await db.already_awarded(synthetic_id):
+                    continue
+
+                discord_id = await db.get_discord_id_for_slug(slug)
+                if not discord_id:
+                    log.info("tournament_id=%s placement=%s slug=%s has no linked Discord account, skipping",
+                             tournament_id, placement, slug)
+                    continue
+
+                faction_name = await db.get_member_faction(discord_id)
+                if not faction_name:
+                    log.info("tournament_id=%s placement=%s discord_id=%s is linked but not in a faction, skipping",
+                             tournament_id, placement, discord_id)
+                    continue
+
+                points = config.points_for_result(placement, event_type, player_count)
+                await db.award_points(
+                    result_id=synthetic_id,
+                    discord_id=discord_id,
+                    faction_name=faction_name,
+                    points=points,
+                    placement=placement,
+                    event_date=event_date,
+                    event_type=event_type,
+                    store_name=store_name,
+                    reason="tournament result",
+                )
+                awards.append({
+                    "discord_id": discord_id,
+                    "faction_name": faction_name,
+                    "points": points,
+                    "placement": placement,
+                    "player_name": player.get("name"),
+                    "store_name": store_name,
+                    "event_date": event_date,
+                    "event_type": event_type,
+                })
+
+            await db.mark_tournament_synced(tournament_id)
+            tournaments_processed += 1
 
         pagination = resp.get("pagination", {})
         if page >= pagination.get("total_pages", 1):
             break
         page += 1
 
-    log.info("Sync finished: %d result(s) seen from DigiLab, %d award(s) given", total_results_seen, len(awards))
+    log.info("Sync finished: %d tournament(s) seen, %d newly processed, %d award(s) given",
+              total_tournaments_seen, tournaments_processed, len(awards))
 
     if awards:
         await announce(bot, db, awards)

@@ -39,6 +39,13 @@ CREATE TABLE IF NOT EXISTS points_log (
     awarded_at   TEXT DEFAULT (datetime('now'))
 );
 
+-- Tournaments fully processed by sync_points, so we don't re-fetch their
+-- full standings (/api/tournament/{id}) on every sync run.
+CREATE TABLE IF NOT EXISTS synced_tournaments (
+    tournament_id INTEGER PRIMARY KEY,
+    synced_at     TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -174,6 +181,14 @@ class DB:
             await cur.execute("SELECT * FROM registrations WHERE discord_id = ?", (discord_id,))
             return await cur.fetchone()
 
+    async def get_registration_by_player_name(self, player_name: str):
+        """Case-insensitive exact match on the linked DigiLab player name."""
+        async with self.cursor() as cur:
+            await cur.execute(
+                "SELECT * FROM registrations WHERE LOWER(player_name) = LOWER(?)", (player_name.strip(),)
+            )
+            return await cur.fetchone()
+
     async def get_discord_id_for_slug(self, player_slug: str):
         async with self.cursor() as cur:
             await cur.execute(
@@ -192,6 +207,17 @@ class DB:
         async with self.cursor() as cur:
             await cur.execute("SELECT 1 FROM points_log WHERE result_id = ?", (result_id,))
             return (await cur.fetchone()) is not None
+
+    async def tournament_already_synced(self, tournament_id: int) -> bool:
+        async with self.cursor() as cur:
+            await cur.execute("SELECT 1 FROM synced_tournaments WHERE tournament_id = ?", (tournament_id,))
+            return (await cur.fetchone()) is not None
+
+    async def mark_tournament_synced(self, tournament_id: int):
+        await self._conn.execute(
+            "INSERT OR IGNORE INTO synced_tournaments (tournament_id) VALUES (?)", (tournament_id,)
+        )
+        await self._conn.commit()
 
     async def award_points(self, result_id, discord_id, faction_name, points,
                             placement=None, event_date=None, event_type=None,

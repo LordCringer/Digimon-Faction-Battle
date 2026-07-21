@@ -13,7 +13,7 @@ GUILD_ID = int(_guild_id_raw) if _guild_id_raw else None
 
 DB_PATH = os.getenv("DB_PATH", "faction_bot.db")
 _poll_raw = (os.getenv("POLL_INTERVAL_MINUTES") or "").strip()
-POLL_INTERVAL_MINUTES = int(_poll_raw) if _poll_raw else 30
+POLL_INTERVAL_MINUTES = int(_poll_raw) if _poll_raw else 15
 
 DIGILAB_BASE_URL = "https://api.digilab.cards"
 
@@ -22,6 +22,11 @@ DIGILAB_BASE_URL = "https://api.digilab.cards"
 # message). Renaming/deleting factions is still possible via /faction
 # create|delete for anything added later.
 DEFAULT_FACTIONS = ["Shambala", "Liberator", "Iliad", "Glowing Dawn"]
+
+# Fallback lookback window for auto-sync when no /factionadmin
+# set-season-start date has been configured. Once a season start is set,
+# that takes over completely and this is ignored.
+DEFAULT_LOOKBACK_DAYS = 60
 
 # ---- Points scheme -----------------------------------------------------
 # Points awarded per result, based on placement. Two tables: tournaments
