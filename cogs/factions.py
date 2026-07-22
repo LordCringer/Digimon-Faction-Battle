@@ -438,7 +438,7 @@ class Factions(commands.Cog):
         embed.add_field(name="Points", value=f"{total:g}", inline=True)
         embed.add_field(
             name="DigiLab account",
-            value=f"[{reg['player_name']}](https://digilab.cards/player/{reg['player_slug']})" if reg else "*not linked — use `/register`*",
+            value=f"[{reg['player_name']}](https://digilab.cards/tamer/{reg['player_slug']})" if reg else "*not linked — use `/register`*",
             inline=False,
         )
         await interaction.followup.send(embed=embed)
