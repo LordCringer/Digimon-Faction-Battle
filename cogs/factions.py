@@ -338,6 +338,36 @@ class Factions(commands.Cog):
         embed = discord.Embed(title=title, description="\n".join(lines), color=discord.Color.gold())
         await interaction.followup.send(embed=embed)
 
+    @faction_group.command(name="members", description="List all members of a faction")
+    @app_commands.autocomplete(name=faction_autocomplete)
+    async def members(self, interaction: discord.Interaction, name: str):
+        await interaction.response.defer()
+        faction = await self.db.get_faction(name)
+        if not faction:
+            await interaction.followup.send(
+                f"No faction named **{name}**. Use `/faction list` to see options.", ephemeral=True
+            )
+            return
+
+        member_ids = await self.db.faction_members(name)
+        icon = faction["emoji"] or ""
+        if not member_ids:
+            await interaction.followup.send(f"{icon} **{name}** has no members yet.")
+            return
+
+        mentions = [f"<@{mid}>" for mid in member_ids]
+        shown = mentions[:40]
+        body = "\n".join(shown)
+        if len(mentions) > 40:
+            body += f"\n*...and {len(mentions) - 40} more*"
+
+        embed = discord.Embed(
+            title=f"{icon} {name} — {len(mentions)} member{'s' if len(mentions) != 1 else ''}".strip(),
+            description=body[:4000],
+            color=discord.Color.blurple(),
+        )
+        await interaction.followup.send(embed=embed)
+
     @app_commands.command(name="joinfactionbattle", description="Pick your faction with a dropdown menu")
     async def join_faction_battle(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)

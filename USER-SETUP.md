@@ -52,6 +52,11 @@ Top players overall, or scoped to one faction:
 ```
 
 ```
+/faction members name:Shambala
+```
+See everyone currently in a given faction.
+
+```
 /tournaments
 ```
 Browse recent tournaments in the local scene — date, store, player count, and winner. Handy for spotting your own tournament's ID or double-checking your placement got recorded.

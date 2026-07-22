@@ -269,6 +269,7 @@ port conflicts either way — Discord bots only make outbound connections.
 | `/faction leave` | anyone | Leave your faction |
 | `/faction list` | anyone | Show all factions and their point totals |
 | `/faction leaderboard [name]` | anyone | Top players, overall or per-faction |
+| `/faction members <name>` | anyone | List every member of a specific faction |
 | `/profile [user]` | anyone | Your (or someone's) faction, points, DigiLab link |
 | `/tournaments [limit]` | anyone | Browse recent tournaments in the configured scene, with their IDs |
 | `/faction create <name> [emoji]` | Manage Server | Create a faction |
