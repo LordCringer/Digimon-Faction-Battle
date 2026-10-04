@@ -1,0 +1,8 @@
+services:
+  faction-bot:
+    build: .
+    container_name: digimon-faction-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data

@@ -84,9 +84,9 @@ PLACEMENT_POINTS_SMALL = {
     1: 7, 2: 5, 3: 4, 4: 3,
 }
 
-# Only in-person store locals and Evo Cup events are tracked — regionals,
-# majors, casuals, and online events are excluded entirely.
-TRACKED_EVENT_TYPES = ["locals", "evo_cup"]
+# Only in-person store locals are tracked — regionals, majors, and online
+# events are excluded entirely.
+TRACKED_EVENT_TYPES = ["locals"]
 ```
 
 Tournaments with **10 or more players** use the standard table; anything
@@ -301,10 +301,10 @@ port conflicts either way — Discord bots only make outbound connections.
   standings with no slug, so they can never be matched to a Discord
   account — this is a DigiLab-side privacy setting, not something the bot
   can work around.
-- Only `locals` and `evo_cup` event results count toward faction points
-  (`TRACKED_EVENT_TYPES` in `config.py`) — regionals, majors, casuals, and
-  online events are intentionally excluded to keep this strictly an
-  in-person local-scene competition.
+- Only `locals` event results count toward faction points
+  (`TRACKED_EVENT_TYPES` in `config.py`) — regionals, majors, and online
+  events are intentionally excluded to keep this strictly an in-person
+  local-scene competition.
 - Per DigiLab's terms, this bot's public output should credit DigiLab —
   the announcement embeds link back implicitly via player names; consider
   adding "Data provided by DigiLab (digilab.cards)" somewhere visible if

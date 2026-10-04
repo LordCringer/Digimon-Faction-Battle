@@ -95,4 +95,4 @@ You should see `Sync starting...` / `Page N: X tournament(s)...` / `Sync finishe
   marker as a side effect.
 - Auto-sync runs automatically every `POLL_INTERVAL_MINUTES` (currently 15) in the background — no action needed once scene + season start are set.
 - Auto-sync and manual logging (`log-result` / `log-tournament`) don't recognize each other's entries — avoid double-logging the same tournament both ways.
-- Only `locals` and `evo_cup` event results count toward points (`TRACKED_EVENT_TYPES` in `config.py`) — regionals/majors/casuals/online are excluded by design.
+- Only `locals` event results count toward points (`TRACKED_EVENT_TYPES` in `config.py`) — regionals/majors/online are excluded by design.

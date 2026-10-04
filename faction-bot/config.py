@@ -51,9 +51,9 @@ PLACEMENT_POINTS_SMALL = {
     4: 3,
 }
 
-# Only in-person store locals and Evo Cup events are tracked for faction
-# points — regionals, majors, casuals, and online events are excluded entirely.
-TRACKED_EVENT_TYPES = ["locals", "evo_cup"]
+# Only in-person store locals are tracked for faction points — regionals,
+# majors, and online events are excluded entirely.
+TRACKED_EVENT_TYPES = ["locals"]
 
 
 def points_for_result(placement: int, event_type: str, player_count: int = None) -> float:
